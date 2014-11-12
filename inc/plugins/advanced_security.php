@@ -27,7 +27,7 @@ function advanced_security_info()
 		"website"		=> "",
 		"author"		=> "Mark Janssen",
 		"authorsite"		=> "",
-		"version"		=> "1.1",
+		"version"		=> "2.0",
 		"guid" 			=> "af4b485d999eda33cd04a6381b698ac6",
         "codename" => "advanced_security",
 		"compatibility"	=> "18*"
@@ -38,21 +38,39 @@ function advanced_security_install()
 {
     global $mybb, $db;
     $characterset = $db->build_create_table_collation();
-    $db->query("CREATE TABLE " . TABLE_PREFIX . "modcp_sessions (
-    sid INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
-    uid INT NOT NULL DEFAULT 1,
-    ipaddress VARCHAR(15),
-    dateline BIGINT,
-    lastmodaction BIGINT,
-    loginkey VARCHAR(50)
-    ) ENGINE = Innodb $characterset");
-    $db->add_column("users", "modcp_lockout", "TINYINT(1) DEFAULT 0");
+    if(!$db->table_exists("modcp_sessions"))
+    {
+        $db->query("CREATE TABLE " . TABLE_PREFIX . "modcp_sessions (
+        sid INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+        uid INT NOT NULL DEFAULT 1,
+        ipaddress VARCHAR(15),
+        dateline BIGINT,
+        lastmodaction BIGINT,
+        loginkey VARCHAR(50)
+        ) ENGINE = Innodb $characterset");
+    }
+
+    if(!$db->table_exists("admin_ips"))
+    {
+        $db->write_query("CREATE TABLE " . TABLE_PREFIX . "admin_ips (
+        id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+        uid INT NOT NULL DEFAULT 1,
+        username VARCHAR(50),
+        ipaddress VARCHAR(15),
+        allow_disallow INT NOT NULL DEFAULT 1
+        ) ENGINE = Innodb $characterset");
+    }
+
+    if(!$db->field_exists("modcp_lockout", "users"))
+    {
+         $db->add_column("users", "modcp_lockout", "TINYINT(1) DEFAULT 0");
+    }
 }
 
 function advanced_security_is_installed()
 {
     global $db;
-    if($db->table_exists("modcp_sessions"))
+    if($db->table_exists("modcp_sessions") && $db->table_exists("admin_ips"))
     {
         return true;
     }
@@ -61,7 +79,58 @@ function advanced_security_is_installed()
 
 function advanced_security_activate()
 {
-    // Silence
+    global $db, $mybb, $cache;
+    // Assume the last ips for admins are allowed.
+    // Get usergroups with ACP access
+	$usergroups = array();
+	$query = $db->simple_select("usergroups", "*", "cancp = 1");
+	while($usergroup = $db->fetch_array($query))
+	{
+		$usergroups[$usergroup['gid']] = $usergroup;
+	}
+	// Get users whose primary or secondary usergroup has ACP access
+	$comma = $primary_group_list = $secondary_group_list = '';
+	foreach($usergroups as $gid => $group_info)
+	{
+		$primary_group_list .= $comma.$gid;
+		switch($db->type)
+		{
+			case "pgsql":
+			case "sqlite":
+				$secondary_group_list .= " OR ','|| u.additionalgroups||',' LIKE '%,{$gid},%'";
+				break;
+			default:
+				$secondary_group_list .= " OR CONCAT(',', u.additionalgroups,',') LIKE '%,{$gid},%'";
+		}
+		$comma = ',';
+	}
+	$group_list = implode(',', array_keys($usergroups));
+	$secondary_groups = ','.$group_list.',';
+    $query = $db->query("
+		SELECT u.uid, u.username, u.lastactive, u.usergroup, u.additionalgroups, u.lastip, a.permissions
+		FROM ".TABLE_PREFIX."users u
+		LEFT JOIN ".TABLE_PREFIX."adminoptions a ON (a.uid=u.uid)
+		WHERE u.usergroup IN ({$primary_group_list}) {$secondary_group_list}
+		ORDER BY u.username ASC
+	");
+	while($admin = $db->fetch_array($query))
+	{
+		$allowedip[] = array(
+        "uid" => $admin['uid'],
+        "username" => $admin['username'],
+        "ipaddress" => $admin['lastip'],
+        "allow_disallow" => 1
+        );
+    }
+    $db->insert_query_multiple("admin_ips", $allowedip);
+    // Now cache the ips
+    $query = $db->simple_select("admin_ips", "*", "allow_disallow = 1", array("order_by"=> "uid", "order_dir" => "ASC"));
+    $data = "";
+    while($ip = $db->fetch_array($query))
+    {
+        $data[$ip['uid']][] = $ip;
+    }
+    $cache->update("admin_ips", $data);
 }
 
 function advanced_security_deactivate()
@@ -249,6 +318,18 @@ function advanced_security_tool_menu(&$sub_menu)
     "title" => "Mod CP Session Manager",
     "link" => "index.php?module=tools-modcp_sessions"
     );
+    $key += 10;
+    $sub_menu[$key] = array(
+    "id" => "admin_ips",
+    "title" => "Admin IP Manager",
+    "link" => "index.php?module=tools-admin_ips"
+    );
+    $key += 10;
+    $sub_menu[$key] = array(
+    "id" => "admincp_sessions",
+    "title" => "Admin CP Session Manager",
+    "link" => "index.php?module=tools-admincp_sessions"
+    );
 }
 
 function advanced_security_tool_action_handler(&$actions)
@@ -256,6 +337,14 @@ function advanced_security_tool_action_handler(&$actions)
     $actions['modcp_sessions'] = array(
     "active" => "modcp_sessions",
     "file" => "modcp_sessions.php"
+    );
+    $actions['admin_ips'] = array(
+    "active" => "admin_ips",
+    "file" => "admin_ips.php"
+    );
+    $actions['admincp_sessions'] = array(
+    "active" => "admincp_sessions",
+    "file" => "admincp_sessions.php"
     );
 }
 
@@ -356,13 +445,22 @@ function advanced_security_do_login()
     {
         return;
     }
+     // Now perform more validation
+    $userid = $mybb->user['uid'];
+    $valid = advanced_security_check_ip($userid);
+    if(!$valid)
+    {
+        $mybb->user['uid'] = "";
+        // Delete the admin session
+        $db->delete_query("adminsessions", "sid='".$db->escape_string($mybb->cookies['adminsid'])."'");
+		my_unsetcookie('adminsid');
+		$logged_out = true;
+    }
     if($mybb->input['do'] != "login")
     {
         return;
     }
-    // Now perform more validation
-    $userid = $mybb->user['uid'];
-    if(!array_key_exists("private_keys", $config))
+    if(!array_key_exists("private_keys", $config) && $valid)
     {
         return;
     }
@@ -424,6 +522,87 @@ function advanced_security_do_login()
             }
         }
     }
+}
+
+function advanced_security_check_ip($userid)
+{
+    global $mybb, $db, $cache;
+    $valid = 0;
+    $my_ip = get_ip();
+    $ipaddresses = $cache->read("admin_ips");
+    if(array_key_exists($userid, $ipaddresses))
+    {
+        foreach($ipaddresses as $ipaddress)
+        {
+            foreach($ipaddress as $ip)
+            {
+                if($ip['ipaddress'] == $my_ip)
+                {
+                    return TRUE;
+                }
+            }
+        }
+    }
+    return FALSE;
+}
+
+function advanced_security_update_admin_ip_cache()
+{
+    global $db, $cache;
+    $query = $db->simple_select("admin_ips", "*", "allow_disallow = 1", array("order_by"=> "uid", "order_dir" => "ASC"));
+    $data = "";
+    while($ip = $db->fetch_array($query))
+    {
+        $data[$ip['uid']][] = $ip;
+    }
+    $cache->update("admin_ips", $data);
+}
+
+function advanced_security_verify_ip($ip)
+{
+    if(!strpos(".", $ip))
+    {
+        return FALSE;
+    }
+    $exip = explode(".", $ip);
+    // Not forcing all four octets in case a future release I allow three octet inputs
+    foreach($exip as $ipaddress)
+    {
+        $ipaddress = (int) $ipaddress;
+        if(!$ipaddress || $ipaddress < 1 || $ipaddress > 255)
+        {
+            return FALSE;
+        }
+    }
+    return TRUE;
+}
+
+function advanced_security_add_ip($ip)
+{
+    global $mybb, $db;
+    if(!advanced_security_verify_ip($ip))
+    {
+        error("Invalid IP.");
+    }
+    // First get the blocked IPs so it can't be added if it exists in them.
+    $query = $db->simple_select("admin_ips", "*", "allow_disallow=0");
+    while($blockedip = $db->fetch_array($query))
+    {
+        $bannedips[] = $blockedip['ipaddress'];
+    }
+    if(in_array($ip, $bannedips))
+    {
+        error("This IP is not allowed to access the ACP.");
+    }
+    // All checks are good. Add the IP to the whitelist.
+    $new_ip = array(
+    "uid" => $mybb->user['uid'],
+    "username" => $mybb->user['username'],
+    "ipaddress" => $db->escape_string($ip),
+    "allow_disallow" => 1
+    );
+    $db->insert_query("admin_ips", $new_ip);
+    advanced_security_update_admin_ip_cache();
 }
 
 ?>
