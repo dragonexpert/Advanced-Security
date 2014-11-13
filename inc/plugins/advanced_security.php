@@ -436,7 +436,7 @@ function advanced_security_admin_login(&$args)
     // First we need to decide if an IP needs to be added.
     if($mybb->input['action'] == "addip" && $mybb->input['code'])
     {
-        $ip = get_ip();
+        $ip = advanced_security_ip();
         advanced_security_add_ip($ip);
     }
 
@@ -549,14 +549,14 @@ function advanced_security_do_login()
         // Add the failed login
         $failed_login = array(
         "username" => $db->escape_string($mybb->input['username']),
-        "ipaddress" => get_ip(),
+        "ipaddress" => advanced_security_ip(),
         "dateline" => TIME_NOW
         );
         $logid = $db->insert_query("admin_logins", $failed_login);
         /** Check how many failed logins within the last 24 hours.
         * If more than 3, immediately block the IP from the ACP and notify the admin.
         */
-        $safe_ip = $db->escape_string(get_ip());
+        $safe_ip = $db->escape_string(advanced_security_ip());
         $cutoff = TIME_NOW - 86400;
         $query = $db->simple_select("admin_logins", "COUNT(logid) as total", "ipaddress='$safe_ip' AND success=0 AND dateline >= $cutoff");
         $total = $db->fetch_field($query, "total");
@@ -569,7 +569,7 @@ function advanced_security_do_login()
             $banned_ip = array(
             "uid" => (int) $userid,
             "username" => $db->escape_string($mybb->input['username']),
-            "ipaddress" => $db->escape_string(get_ip()),
+            "ipaddress" => $db->escape_string(advanced_security_ip()),
             "allow_disallow" => 0
             );
             $db->insert_query("admin_ips", $banned_ip);
@@ -581,7 +581,7 @@ function advanced_security_do_login()
     }
     $login_data = array(
     "username" => $db->escape_string($mybb->input['username']),
-    "ipaddress" => get_ip(),
+    "ipaddress" => advanced_security_ip(),
     "success" => 1,
     "dateline" => TIME_NOW
     );
@@ -635,7 +635,7 @@ function advanced_security_do_login()
                 {
                     $failed_login = array(
                         "username" => $db->escape_string($mybb->input['username']),
-                        "ipaddress" => get_ip(),
+                        "ipaddress" => advanced_security_ip(),
                         "dateline" => TIME_NOW
                     );
                     $db->insert_query("admin_logins", $failed_login);
@@ -666,7 +666,7 @@ function advanced_security_check_ip($userid)
 {
     global $mybb, $db, $cache;
     $valid = 0;
-    $my_ip = get_ip();
+    $my_ip = advanced_security_ip();
     $ipaddresses = $cache->read("admin_ips");
     if(array_key_exists($userid, $ipaddresses))
     {
@@ -763,7 +763,7 @@ function advanced_security_send_code()
 {
     global $mybb, $db, $config;
     // First we need to make sure the IP Address is allowed to be added.
-    $safe_ip = $db->escape_string(get_ip());
+    $safe_ip = $db->escape_string(advanced_security_ip());
     $query = $db->simple_select("admin_ips", "*", "ipaddress='$safe_ip'");
     $ip_info = $db->fetch_array($query);
     if($db->num_rows($query) == 0)
@@ -807,6 +807,54 @@ function advanced_security_send_code()
             }
         }
     }
+}
+
+function advanced_security_ip()
+{
+    global $mybb, $plugins;
+    if($mybb->version_code > 1802)
+    {
+        return get_ip();
+    }
+	$ip = strtolower($_SERVER['REMOTE_ADDR']);
+	if($mybb->settings['ip_forwarded_check'])
+	{
+		$addresses = array();
+		if(isset($_SERVER['HTTP_X_FORWARDED_FOR']))
+		{
+			$addresses = explode(',', strtolower($_SERVER['HTTP_X_FORWARDED_FOR']));
+		}
+		elseif(isset($_SERVER['HTTP_X_REAL_IP']))
+		{
+			$addresses = explode(',', strtolower($_SERVER['HTTP_X_REAL_IP']));
+		}
+		if(is_array($addresses))
+		{
+			foreach($addresses as $val)
+			{
+				$val = trim($val);
+				// Validate IP address and exclude private addresses
+				if(my_inet_ntop(my_inet_pton($val)) == $val && !preg_match("#^(10\.|172\.(1[6-9]|2[0-9]|3[0-1])\.|192\.168\.|fe80:|fe[c-f][0-f]:|f[c-d][0-f]{2}:)#", $val))
+				{
+					$ip = $val;
+					break;
+				}
+			}
+		}
+	}
+	if(!$ip)
+	{
+		if(isset($_SERVER['HTTP_CLIENT_IP']))
+		{
+			$ip = strtolower($_SERVER['HTTP_CLIENT_IP']);
+		}
+	}
+	if($plugins)
+	{
+		$ip_array = array("ip" => &$ip); // Used for backwards compatibility on this hook with the updated run_hooks() function.
+		$plugins->run_hooks("get_ip", $ip_array);
+	}
+	return $ip;
 }
 
 ?>
