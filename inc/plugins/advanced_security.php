@@ -17,13 +17,16 @@ $plugins->add_hook("admin_tools_action_handler", "advanced_security_tool_action_
 // Admin Log In
 $plugins->add_hook("admin_page_show_login_end", "advanced_security_admin_login");
 $plugins->add_hook("admin_load", "advanced_security_do_login");
-
+// Upgrade the Plugin
+$plugins->add_hook("admin_config_plugins_begin", "advanced_security_upgrade");
 // Return the info
 function advanced_security_info()
 {
+    global $mybb;
+    $upgradelink = "<a href=\"index.php?module=config-plugins&action=upgrade_advanced_security&my_post_key=" . $mybb->post_code . "\">Click Here</a> to Upgrade.";
         return array(
         "name"	=> "Advanced Forum Security",
-		"description"		=> "A plug-in that improves security by making the MOD CP require an additional login.  Also include a session manager.",
+		"description"		=> "A plug-in that improves security by making the MOD CP require an additional login.  Also includes a session manager. {$upgradelink}",
 		"website"		=> "",
 		"author"		=> "Mark Janssen",
 		"authorsite"		=> "",
@@ -167,6 +170,52 @@ function advanced_security_uninstall()
     global $db;
     $db->drop_table("modcp_sessions", true, true);
     $db->drop_column("users", "modcp_lockout");
+}
+
+function advanced_security_upgrade()
+{
+    global $db, $mybb;
+    if($mybb->input['action'] == "upgrade_advanced_security")
+    {
+        verify_post_check($mybb->input['my_post_key']);
+        $characterset = $db->build_create_table_collation();
+        if(!$db->table_exists("admin_ips"))
+        {
+            $db->write_query("CREATE TABLE " . TABLE_PREFIX . "admin_ips (
+                id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+                uid INT NOT NULL DEFAULT 1,
+                username VARCHAR(50),
+                ipaddress VARCHAR(15),
+                allow_disallow INT NOT NULL DEFAULT 1
+                ) ENGINE = Innodb $characterset");
+        }
+
+        if(!$db->table_exists("admin_logins"))
+        {
+            $db->write_query("CREATE TABLE " . TABLE_PREFIX . "admin_logins (
+                logid INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+                username VARCHAR(50),
+                ipaddress VARCHAR(15),
+                dateline INT UNSIGNED NOT NULL DEFAULT 0,
+                success SMALLINT DEFAULT 0
+                ) ENGINE = Innodb $characterset");
+        }
+
+        if(!$db->table_exists("ip_codes"))
+        {
+            $db->write_query("CREATE TABLE " . TABLE_PREFIX . "ip_codes (
+            id INT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+            ipaddress VARCHAR(15),
+            dateline INT UNSIGNED NOT NULL DEFAULT 0,
+            used SMALLINT DEFAULT 0,
+            code TEXT,
+            uid INT UNSIGNED NOT NULL DEFAULT 0,
+            username VARCAHR(50)
+            ) ENGINE = Innodb $characterset");
+        }
+        flash_message("Advanced Security Upgrade Script Ran Succesfully", "success");
+        admin_redirect("index.php?module=config-plugins");
+    }
 }
 
 function advanced_security_modcp()
