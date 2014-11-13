@@ -121,12 +121,6 @@ function advanced_security_list_admincp_sessions($active=1, $pagenumber=1)
 function advanced_security_destroy_admin_session($sid)
 {
     global $mybb, $db, $superadmin;
-    if(!$superadmin)
-    {
-        flash_message("You are not authorized to do this action.", "error");
-        admin_redirect("index.php?module=tools-admincp_sessions");
-        die();
-    }
     $sid = $db->escape_string($sid);
     // First we want to query the session and stop the attempt if the session belongs to a super admin.
     $queryfirst = $db->simple_select("admincp_sessions", "*", "loginkey=$sid");
