@@ -98,7 +98,7 @@ function advanced_security_modcp_lockout()
     {
         $table->construct_cell($lockeduser['username']);
         $table->construct_cell($lockeduser['lastip']);
-        $table->construct_cell(my_date($mybb->settings['dateformat'], $lockeduser['lastactive']));
+        $table->construct_cell(my_date("relative", $lockeduser['lastactive']));
         if($superadmin)
         {
             $content = "<a href=\"index.php?module=tools-modcp_sessions&action=unlock_modcp&sid=" . $lockeduser['uid'] . "\">Remove Block</a>";
