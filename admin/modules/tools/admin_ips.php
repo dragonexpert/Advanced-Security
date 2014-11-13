@@ -7,6 +7,14 @@ if($mybb->input['action'] == "deleteip")
 {
     verify_post_check($mybb->input['my_post_key']);
     $id = (int) $mybb->input['id'];
+    // Check if it belongs to a super admin.
+    $queryfirst = $db->simple_select("admin_ips", "*", "id=$id");
+    $ip_info = $db->fetch_array($queryfirst);
+    if(is_super_admin($ip_info['uid']))
+    {
+        flash_message("This IP Address cannot be deleted because it belongs to a super admin.");
+        admin_redirect("index.php?module=tools-admin_ips", "error");
+    }
     $db->delete_query("admin_ips", "id=$id");
     advanced_security_update_admin_ip_cache();
     flash_message("The IP has been removed.", "success");
@@ -17,6 +25,14 @@ if($mybb->input['action'] == "blockip")
 {
     verify_post_check($mybb->input['my_post_key']);
     $id = (int) $mybb->input['id'];
+    // Check if it belongs to a super admin.
+    $queryfirst = $db->simple_select("admin_ips", "*", "id=$id");
+    $ip_info = $db->fetch_array($queryfirst);
+    if(is_super_admin($ip_info['uid']))
+    {
+        flash_message("This IP Address cannot be blocked because it belongs to a super admin.");
+        admin_redirect("index.php?module=tools-admin_ips", "error");
+    }
     $db->write_query("UPDATE " . TABLE_PREFIX . "admin_ips SET allow_disallow=0 WHERE id=$id");
     advanced_security_update_admin_ip_cache();
     flash_message("The IP has been blocked.", "success");
@@ -43,6 +59,15 @@ if($mybb->input['action'] == "addip")
     "username" => $db->escape_string($ip_data['username']),
     "allow_disallow" => (int) $mybb->input['allow_disallow']
     );
+    if($new_ip['allow_disallow'] == 0)
+    {
+        // Check if it belongs to a super admin.
+        if(is_super_admin($ip_data['uid']))
+        {
+            flash_message("This IP Address cannot be blocked because it belongs to a super admin.");
+            admin_redirect("index.php?module=tools-admin_ips", "error");
+        }
+    }
     $db->insert_query("admin_ips", $new_ip);
     flash_message("Added the IP successfully. $special", "success");
     admin_redirect("index.php?module=tools-admin_ips");
@@ -64,6 +89,14 @@ if($mybb->input['action'] == "addusername")
     "ipaddress" => my_inet_ntop($db->unescape_binary($ip_data['lastip'])),
     "allow_disallow" => (int) $mybb->input['allow_disallow']
     );
+    if($insert_ip['allow_disallow'] == 0)
+    {
+        if(is_super_admin($ip_data['uid']))
+        {
+            flash_message("The IP cannot be blocked because it belongs to a super admin.", "error");
+            admin_redirect("index.php?module=tools-admin_ips");
+        }
+    }
     $db->insert_query("admin_ips", $insert_ip);
     flash_message("Added the IP successfully.", "success");
     admin_redirect("index.php?module=tools-admin_ips");
