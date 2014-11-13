@@ -99,7 +99,7 @@ function advanced_security_list_admincp_sessions($active=1, $pagenumber=1)
         $admincp_session['ip'] = my_inet_ntop($db->unescape_binary($admincp_session['ip']));
         $table->construct_cell($admincp_session['username']);
         $table->construct_cell($admincp_session['ip']);
-        $table->construct_cell(my_date($mybb->settings['timeformat'], $admincp_session['lastactive']));
+        $table->construct_cell(my_date("relative", $admincp_session['lastactive']));
         if($superadmin)
         {
             if($active)
