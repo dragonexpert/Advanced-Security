@@ -8,7 +8,7 @@ Installation
 1) Upload advanced_security.php to your inc/plugins directory.  
 2) Upload modcp_sessions.php to your admin/modules/tools directory.  
 3) Install and activate from the Admin CP.    
-4) If you are not using MyBB 1.8.2 or later, you will need to edit your /inc/functions.php file. Look for the get_ip function.  Replace all content there with the get_ip function in mybb/mybb/feature branch.  
+  
 
 Configuring Admin Logins  
 
@@ -20,6 +20,13 @@ Example of config.php
 
 $config['private_keys'][1]['hash'] = "a94a8fe5ccb19ba61c4c0873d391e987982fbbd3";
 $config['private_keys'][1]['filename'] = "kadjakls.txt";
+
+IP Addresses are logged as of version 2.0.  If the user who tries to log in does not have an IP in the whitelist, they will
+be unable to log in.  At this point, it will then verify if the username entered can in fact access the Admin CP.  It also makes sure the IP Address is not specifically blocked from accessing the Admin CP.  If it passes those conditions it will send an email to the account that has a special code in the link.  If the user clicks that link, they will be able to add their IP to the whitelist.  It should be noted that links sent in the email expire in 2 hours for security reasons.  This can be adjusted by manually editing the advanced_security_add_ip function in /inc/plugins/advanced_security.php.
+
+Once this plugin is installed, it attempts to add the last known IP of each person that can access the Admin CP.  This makes it less worry for you being forced to add their IP.  There is also a module for adding / deleting / blocking IPs access of the Admin CP.  Adding and blocking can be done either by IP or username to get the correct values.  Deleting the access is as easy as clicking a link that says Remove IP.
+
+The system also can manage itself in the Admin CP.  If the same IP has failed the Admin CP Login 3 times within 24 hours, the IP Address is immediately added to a blacklist, making it impossible for the IP to be added without manipulating the database.  It also sends an email to the admin email specified under Board Settings. 
 
 
 Support
