@@ -14,6 +14,8 @@ $plugins->add_hook("member_logout_end", "advanced_security_logout");
 $plugins->add_hook("admin_tools_menu_logs", "advanced_security_tool_menu");
 // Admin Action Handler
 $plugins->add_hook("admin_tools_action_handler", "advanced_security_tool_action_handler");
+// Admin Permissions
+$plugins->add_hook("admin_tools_permissions", "advanced_security_admin_permissions");
 // Admin Log In
 $plugins->add_hook("admin_page_show_login_end", "advanced_security_admin_login");
 $plugins->add_hook("admin_load", "advanced_security_do_login");
@@ -419,6 +421,13 @@ function advanced_security_tool_action_handler(&$actions)
     "active" => "admincp_sessions",
     "file" => "admincp_sessions.php"
     );
+}
+
+function advanced_security_admin_permissions(&$admin_permissions)
+{
+    $admin_permissions['modcp_sessions'] = "Can Manage Mod CP Sessions?";
+    $admin_permissions['admincp_sessions'] = "Can Manage Admin CP Sessions?";
+    $admin_permissions['admin_ips'] = "Can Manage Admin IPs?";
 }
 
 function advanced_security_admin_login(&$args)
