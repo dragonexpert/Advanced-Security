@@ -40,7 +40,7 @@ function advanced_security_install()
     $characterset = $db->build_create_table_collation();
     if(!$db->table_exists("modcp_sessions"))
     {
-        $db->query("CREATE TABLE " . TABLE_PREFIX . "modcp_sessions (
+        $db->write_query("CREATE TABLE " . TABLE_PREFIX . "modcp_sessions (
         sid INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
         uid INT NOT NULL DEFAULT 1,
         ipaddress VARCHAR(15),
@@ -58,6 +58,30 @@ function advanced_security_install()
         username VARCHAR(50),
         ipaddress VARCHAR(15),
         allow_disallow INT NOT NULL DEFAULT 1
+        ) ENGINE = Innodb $characterset");
+    }
+
+    if(!$db->table_exists("admin_logins"))
+    {
+        $db->write_query("CREATE TABLE " . TABLE_PREFIX . "admin_logins (
+        logid INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+        username VARCHAR(50),
+        ipaddress VARCHAR(15),
+        dateline INT UNSIGNED NOT NULL DEFAULT 0,
+        success SMALLINT DEFAULT 0
+        ) ENGINE = Innodb $characterset");
+    }
+
+    if(!$db->table_exists("ip_codes"))
+    {
+        $db->write_query("CREATE TABLE " . TABLE_PREFIX . "ip_codes (
+        id INT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+        ipaddress VARCHAR(15),
+        dateline INT UNSIGNED NOT NULL DEFAULT 0,
+        used SMALLINT DEFAULT 0,
+        code TEXT,
+        uid INT UNSIGNED NOT NULL DEFAULT 0,
+        username VARCAHR(50)
         ) ENGINE = Innodb $characterset");
     }
 
@@ -351,6 +375,14 @@ function advanced_security_tool_action_handler(&$actions)
 function advanced_security_admin_login(&$args)
 {
     global $mybb, $config, $secret_pin, $login_label_width, $login_lang_string, $query_string, $lang, $login_container_width, $cp_style, $copy_year, $lang_username;
+    // First we need to decide if an IP needs to be added.
+    if($mybb->input['action'] == "addip" && $mybb->input['code'])
+    {
+        $ip = get_ip();
+        advanced_security_add_ip($ip);
+    }
+
+
     $login_lang_string = $lang->enter_username_and_password;
 
 		switch($mybb->settings['username_method'])
@@ -440,7 +472,7 @@ $args['login_page'] = $login_page;
 
 function advanced_security_do_login()
 {
-    global $config, $mybb, $page, $db, $lang;
+    global $config, $mybb, $page, $db, $lang, $logged_out;
     if(!defined("IN_ADMINCP"))
     {
         return;
@@ -450,18 +482,54 @@ function advanced_security_do_login()
     $valid = advanced_security_check_ip($userid);
     if(!$valid)
     {
+        advanced_security_send_code();
         $mybb->user['uid'] = "";
         // Delete the admin session
         $db->delete_query("adminsessions", "sid='".$db->escape_string($mybb->cookies['adminsid'])."'");
 		my_unsetcookie('adminsid');
 		$logged_out = true;
+        // Add the failed login
+        $failed_login = array(
+        "username" => $db->escape_string($mybb->input['username']),
+        "ipaddress" => get_ip(),
+        "dateline" => TIME_NOW
+        );
+        $logid = $db->insert_query("admin_logins", $failed_login);
+        /** Check how many failed logins within the last 24 hours.
+        * If more than 3, immediately block the IP from the ACP and notify the admin.
+        */
+        $safe_ip = $db->escape_string(get_ip());
+        $cutoff = TIME_NOW - 86400;
+        $query = $db->simple_select("admin_logins", "COUNT(logid) as total", "ipaddress='$safe_ip' AND success=0 AND dateline >= $cutoff");
+        $total = $db->fetch_field($query, "total");
+        if($total >= 3)
+        {
+            $emailmessage = "The IP " . $safe_ip . " has failed to login to the Admin CP " . $total . " times within the past 24 hours with the username " . htmlspecialchars_uni($mybb->input['username']) . ".  The IP has been blocked from accessing the Admin CP.";
+            $emailsubject = "[Security] Admin Login Failure";
+            $emailto = $mybb->settings['adminemail']; 
+            my_mail($emailto, $emailsubject, $emailmessage);
+            $banned_ip = array(
+            "uid" => (int) $userid,
+            "username" => $db->escape_string($mybb->input['username']),
+            "ipaddress" => $db->escape_string(get_ip()),
+            "allow_disallow" => 0
+            );
+            $db->insert_query("admin_ips", $banned_ip);
+        }
     }
     if($mybb->input['do'] != "login")
     {
         return;
     }
+    $login_data = array(
+    "username" => $db->escape_string($mybb->input['username']),
+    "ipaddress" => get_ip(),
+    "success" => 1,
+    "dateline" => TIME_NOW
+    );
     if(!array_key_exists("private_keys", $config) && $valid)
     {
+        $db->insert_query("admin_logins", $login_data);
         return;
     }
     if(array_key_exists($userid, $config['private_keys']))
@@ -493,6 +561,8 @@ function advanced_security_do_login()
                 }
                 else
                 {
+                    // We are successful
+                    $db->insert_query("admin_logins", $login_data);
                     return;
                 }
             }
@@ -502,6 +572,16 @@ function advanced_security_do_login()
                 $db->delete_query("adminsessions", "sid='".$db->escape_string($mybb->cookies['adminsid'])."'");
 		        my_unsetcookie('adminsid');
 		        $logged_out = true;
+                // Add the failed login
+                if(!$logid)
+                {
+                    $failed_login = array(
+                        "username" => $db->escape_string($mybb->input['username']),
+                        "ipaddress" => get_ip(),
+                        "dateline" => TIME_NOW
+                    );
+                    $db->insert_query("admin_logins", $failed_login);
+                }
                 $login_lang_string = $lang->error_invalid_username_password;
 
 		        switch($mybb->settings['username_method'])
@@ -560,10 +640,6 @@ function advanced_security_update_admin_ip_cache()
 
 function advanced_security_verify_ip($ip)
 {
-    if(!strpos(".", $ip))
-    {
-        return FALSE;
-    }
     $exip = explode(".", $ip);
     // Not forcing all four octets in case a future release I allow three octet inputs
     foreach($exip as $ipaddress)
@@ -584,8 +660,11 @@ function advanced_security_add_ip($ip)
     {
         error("Invalid IP.");
     }
+    // Verify post code
+    verify_post_check($mybb->input['my_post_key']);
     // First get the blocked IPs so it can't be added if it exists in them.
     $query = $db->simple_select("admin_ips", "*", "allow_disallow=0");
+    $bannedips = array();
     while($blockedip = $db->fetch_array($query))
     {
         $bannedips[] = $blockedip['ipaddress'];
@@ -594,15 +673,82 @@ function advanced_security_add_ip($ip)
     {
         error("This IP is not allowed to access the ACP.");
     }
+    // Now check if the token is valid.
+    $cutoff = TIME_NOW - (86400 * 2); // Two hour expiration on codes.
+    $code = $db->escape_string($mybb->input['code']);
+    $query = $db->simple_select("ip_codes", "code='$code'");
+    if(!$db->num_rows($query))
+    {
+        error("Invalid code.");
+    }
+    $ip_info = $db->fetch_array($query);
+    if($ip_info['used'] == 1)
+    {
+        error("This code has already been used.");
+    }
+    $update_array = array(
+    "used" => 1
+    );
+    $db->update_query("ip_codes", $update_array, "code='$code'");
     // All checks are good. Add the IP to the whitelist.
     $new_ip = array(
-    "uid" => $mybb->user['uid'],
-    "username" => $mybb->user['username'],
+    "uid" => $ip_info['uid'],
+    "username" => $ip_info['username'],
     "ipaddress" => $db->escape_string($ip),
     "allow_disallow" => 1
     );
     $db->insert_query("admin_ips", $new_ip);
     advanced_security_update_admin_ip_cache();
+}
+
+function advanced_security_send_code()
+{
+    global $mybb, $db, $config;
+    // First we need to make sure the IP Address is allowed to be added.
+    $safe_ip = $db->escape_string(get_ip());
+    $query = $db->simple_select("admin_ips", "*", "ipaddress='$safe_ip'");
+    $ip_info = $db->fetch_array($query);
+    if($db->num_rows($query) == 0)
+    {
+        // assume its ok since it isn't exclusively blacklisted
+        $ip_info['allow_disallow'] = 1;
+    }
+    if($ip_info['allow_disallow'] == 1)
+    {
+        // Figure out if the username exists.
+        $query = $db->simple_select("users", "uid, username, usergroup, additionalgroups, email", "username='" . $db->escape_string($mybb->input['username']) . "'");
+        if($db->num_rows($query) == 1)
+        {
+            $userinfo = $db->fetch_array($query);
+            $gids = $userinfo['usergroup'];
+            if($userinfo['additionalgroups'])
+            {
+                $gids .= "," . $userinfo['additionalgroups'];
+            }
+            // Get usergroups that can ACP.
+            $query2 = $db->simple_select("usergroups", "*", "gid IN(" . $gids . ") AND cancp=1");
+            if($db->num_rows($query2) >= 1)
+            {
+                // Generate a code
+                $ip_code = array(
+                    "ipaddress" => $safe_ip,
+                    "dateline" => TIME_NOW,
+                    "code" => sha1(microtime()),
+                    "used" => 0,
+                    "uid" => $userinfo['uid'],
+                    "username" => $userinfo['username']
+                );
+                $db->insert_query("ip_codes", $ip_code);
+                $emailto = $userinfo['email'];
+                $emailsubject = "IP Not Recognized";
+                $link = $mybb->settings['bburl'] . "/" . $config['admin_dir'] . "/index.php?action=addip&code=" . $ip_code['code'] . "&my_post_key=" . $mybb->post_code;
+                $emailmessage1 = "Someone, which may have been you, attempted to log into the Admin CP at " . $mybb->settings['bbname'] . ".";
+                $emailmessage1 .= " If this was you, please click the following link: " . $link . " .  If it was not you, please inform the Admin that the IP " .
+                $safe_ip . " attempted to login to the Admin CP with your username.";
+                my_mail($emailto, $emailsubject, $emailmessage1);
+            }
+        }
+    }
 }
 
 ?>
