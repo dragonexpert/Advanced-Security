@@ -11,6 +11,7 @@ Installation
   
 
 Configuring Admin Logins  
+========================
 
 You will notice a field added to the Admin CP login form.  If you have specified $config['private_keys'][$userid]['hashvalue'] it will check if the contents of the file match the value in your inc/config.php file.  If they do not, the login fails and says the standard invalid username / password combination.  This is for improved security so they won't know the username and password may have been correct.  The other field that can be checked is the name of the file they upload.  It will hash the name of the file and see if it matches.  If it fails
 the login will not work.  If $config['private_keys'][$userid]['filename'] is not set, it will not validate the name of the file.  I strongly encourage that you have your users name the file something weird.
@@ -21,6 +22,9 @@ Example of config.php
 $config['private_keys'][1]['hash'] = "a94a8fe5ccb19ba61c4c0873d391e987982fbbd3";
 $config['private_keys'][1]['filename'] = "kadjakls.txt";
 
+Admin IP Manager
+================
+
 IP Addresses are logged as of version 2.0.  If the user who tries to log in does not have an IP in the whitelist, they will
 be unable to log in.  At this point, it will then verify if the username entered can in fact access the Admin CP.  It also makes sure the IP Address is not specifically blocked from accessing the Admin CP.  If it passes those conditions it will send an email to the account that has a special code in the link.  If the user clicks that link, they will be able to add their IP to the whitelist.  It should be noted that links sent in the email expire in 2 hours for security reasons.  This can be adjusted by manually editing the advanced_security_add_ip function in /inc/plugins/advanced_security.php.
 
@@ -28,9 +32,13 @@ Once this plugin is installed, it attempts to add the last known IP of each pers
 
 The system also can manage itself in the Admin CP.  If the same IP has failed the Admin CP Login 3 times within 24 hours, the IP Address is immediately added to a blacklist, making it impossible for the IP to be added without manipulating the database.  It also sends an email to the admin email specified under Board Settings. 
 
+Mod CP Session Manager
+======================
+
+This tools lets you view both active and inactive moderator sessions. It will say the last active time of the session, the username, and the IP Address associated with the session.  Active sessions can also be destroyed by a super admin.  A super admin is also able to block Mod CP access for a user.  The system will also stop two IPs from being logged in at the same time as the same user.
 
 Support
-
+=======
 Support is available based on the following guidelines:
 
 1) Your forum must have the Powered By MyBB and link back to mybb.com.  
